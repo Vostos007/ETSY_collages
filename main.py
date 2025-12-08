@@ -9,6 +9,31 @@ OUTPUT_DIR = './output'
 GRID_SIZE = 5
 TILE_SIZE = 600
 GAP = 10
+# Название коллекции (если пусто — попытаемся определить из имён файлов)
+YARN_NAME = "BC Garn Loch Lomond GOTS"
+
+def derive_yarn_name(files):
+    """Попробовать вывести имя коллекции из имён файлов.
+
+    Берём basename, отбрасываем суффикс -2 и хвостовую числовую группу,
+    оставшееся считаем названием. Возвращаем самое частое.
+    """
+    from collections import Counter
+    names = []
+    for path in files:
+        stem = os.path.splitext(os.path.basename(path))[0]
+        stem = stem[:-2] if stem.endswith('-2') else stem
+        parts = stem.split('-')
+        while parts and parts[-1].isdigit():
+            parts.pop()
+        if not parts:
+            continue
+        name = ' '.join(parts).replace('_', ' ').strip()
+        if name:
+            names.append(name)
+    if not names:
+        return ""
+    return Counter(names).most_common(1)[0][0]
 
 def natural_sort_key(path):
     """Естественная сортировка: 1, 2, 10 вместо 1, 10, 2"""
@@ -152,19 +177,41 @@ def draw_label(draw, x, y, w, h, text):
     draw.text((tx, ty), text, font=font, fill=(255,255,255),
               stroke_width=max(1, size//12), stroke_fill=(0,0,0))
 
-def create_collage(files, cols, tile, gap):
+def create_collage(files, cols, tile, gap, yarn_name=""):
     """Создать один коллаж из списка файлов"""
     n = len(files)
     rows = math.ceil(n / cols)
+    header_h = 0
+    if yarn_name:
+        header_h = max(40, int(tile * 0.15))
+
     W = cols * tile + (cols-1) * gap
-    H = rows * tile + (rows-1) * gap
+    H = header_h + rows * tile + (rows-1) * gap
     canvas = Image.new("RGB", (W, H), "white")
     draw = ImageDraw.Draw(canvas)
+
+    if header_h:
+        bar_color = (245, 245, 245)
+        draw.rectangle([0, 0, W, header_h], fill=bar_color)
+        font = load_font(max(24, header_h // 2))
+        text = yarn_name
+        # совместимость разных версий Pillow
+        try:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except Exception:
+            try:
+                tw, th = draw.textsize(text, font=font)
+            except Exception:
+                tw, th = font.getsize(text)
+        tx = (W - tw) // 2
+        ty = (header_h - th) // 2
+        draw.text((tx, ty), text, font=font, fill=(0, 0, 0))
 
     for idx, path in enumerate(files):
         r, c = divmod(idx, cols)
         x = c * (tile + gap)
-        y = r * (tile + gap)
+        y = header_h + r * (tile + gap)
         with Image.open(path) as im:
             im = ImageOps.exif_transpose(im)
             im = ImageOps.fit(im, (tile, tile), method=Image.LANCZOS)
@@ -183,6 +230,8 @@ def main():
     if not files:
         print(f"❌ В папке {INPUT_DIR} нет изображений")
         return
+
+    yarn_name = YARN_NAME or derive_yarn_name(files)
 
     print(f"Найдено {len(files)} фото")
 
@@ -216,7 +265,7 @@ def main():
         print(f"Коллаж {i+1}/{total_collages}: {len(batch)} фото → {cols}x{math.ceil(len(batch)/cols)}")
 
         # Создать коллаж
-        canvas = create_collage(batch, cols, TILE_SIZE, GAP)
+        canvas = create_collage(batch, cols, TILE_SIZE, GAP, yarn_name)
 
         # Сохранить
         output_file = f"{OUTPUT_DIR}/collage_{i+1}.jpg"
