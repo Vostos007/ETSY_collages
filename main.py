@@ -10,7 +10,7 @@ GRID_SIZE = 5
 TILE_SIZE = 600
 GAP = 10
 # Название коллекции (если пусто — попытаемся определить из имён файлов)
-YARN_NAME = "DROPS Nepal"
+YARN_NAME = "Sandnes Garn ATLAS PetiteKnit"
 # Доп. маркировка: цвета с низким остатком (оставьте пустым множеством, если не нужно)
 LOW_STOCK_CODES = set()
 LOW_STOCK_BADGE_TEXT = "For Contrast color only"
@@ -179,36 +179,11 @@ def draw_label(draw, x, y, w, h, text):
             return b[2] - b[0], b[3] - b[1]
         except:
             return draw.textsize(s, font=font)
-    maxw = w - 2*pad
+    
     tw, th = textbbox_size(text)
-    while tw > maxw and size > 12:
-        size -= 1
-        font = load_font(size)
-        tw, th = textbbox_size(text)
-    if tw > maxw:
-        ell = '…'
-        for i in range(len(text), 0, -1):
-            t = text[:i] + ell
-            tw, th = textbbox_size(t)
-            if tw <= maxw:
-                text = t; break
-        else:
-            text = ell; tw, th = textbbox_size(text)
-
-    # Полупрозрачная светло-серая подложка, чтобы не перекрывать фото
-    bg_h = th + pad*2
-    try:
-        from PIL import Image
-        overlay = Image.new('RGBA', (w, bg_h), (245, 245, 245, 140))
-        draw.im.paste(overlay, (x, y + h - bg_h), overlay)
-    except Exception:
-        # fallback: тонкая линия без заливки
-        draw.rectangle([x, y + h - bg_h, x + w, y + h], outline=(220,220,220))
-
     tx = x + (w - tw)//2
-    ty = y + h - th - pad - 6  # ~2 мм при 72-96 dpi
-    draw.text((tx, ty), text, font=font, fill=(20,20,20),
-              stroke_width=max(1, size//14), stroke_fill=(245,245,245))
+    ty = y + h - th - pad - 6
+    draw.text((tx, ty), text, font=font, fill=(20,20,20))
 
 def create_collage(files, cols, tile, gap, yarn_name=""):
     """Создать один коллаж из списка файлов"""
