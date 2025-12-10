@@ -10,30 +10,54 @@ GRID_SIZE = 5
 TILE_SIZE = 600
 GAP = 10
 # Название коллекции (если пусто — попытаемся определить из имён файлов)
-YARN_NAME = "BC Garn Loch Lomond GOTS"
+YARN_NAME = "DROPS Nepal"
+# Доп. маркировка: цвета с низким остатком (оставьте пустым множеством, если не нужно)
+LOW_STOCK_CODES = set()
+LOW_STOCK_BADGE_TEXT = "For Contrast color only"
+
+def parse_file_info(path):
+    """Извлечь из имени: коллекцию, номер для подписи, ключ группировки.
+
+    Пример: 'Kremke-Babyalpaka-10114.jpg' ->
+      collection='Kremke Babyalpaka', number='10114', caption='10114'
+    """
+    stem = os.path.splitext(os.path.basename(path))[0]
+    stem = stem[:-2] if stem.endswith('-2') else stem
+    parts = re.split(r'[-_]+', stem)
+    ident = None
+    # выбрать последнюю чисто цифровую часть, иначе последнее звено
+    for p in reversed(parts):
+        if p.isdigit():
+            ident = p
+            break
+    if ident is None and parts:
+        ident = parts[-1]
+    # коллекция — всё до идентификатора, если он последний элемент
+    if ident and parts and parts[-1] == ident:
+        coll_parts = parts[:-1]
+    else:
+        coll_parts = [p for p in parts if p != ident] if ident else parts
+    collection = ' '.join(coll_parts).strip() or stem
+    if ident and ident.isdigit():
+        caption = ident.lstrip('0') or ident
+    else:
+        caption = ident or stem
+    group_key = (collection.lower(), caption.lower())
+    return {
+        "collection": collection or stem,
+        "number": ident,
+        "caption": caption,
+        "group_key": group_key,
+    }
+
 
 def derive_yarn_name(files):
-    """Попробовать вывести имя коллекции из имён файлов.
-
-    Берём basename, отбрасываем суффикс -2 и хвостовую числовую группу,
-    оставшееся считаем названием. Возвращаем самое частое.
-    """
+    """Определить имя коллекции по самым частым префиксам."""
     from collections import Counter
-    names = []
-    for path in files:
-        stem = os.path.splitext(os.path.basename(path))[0]
-        stem = stem[:-2] if stem.endswith('-2') else stem
-        parts = stem.split('-')
-        while parts and parts[-1].isdigit():
-            parts.pop()
-        if not parts:
-            continue
-        name = ' '.join(parts).replace('_', ' ').strip()
-        if name:
-            names.append(name)
-    if not names:
+    coll = [parse_file_info(p)["collection"] for p in files if parse_file_info(p)["collection"]]
+    if not coll:
         return ""
-    return Counter(names).most_common(1)[0][0]
+    return Counter(coll).most_common(1)[0][0]
 
 def natural_sort_key(path):
     """Естественная сортировка: 1, 2, 10 вместо 1, 10, 2"""
@@ -41,13 +65,8 @@ def natural_sort_key(path):
             for text in re.split(r'(\d+)', os.path.basename(path))]
 
 def normalize_caption(filename):
-    """Убрать расширение и всё после дефиса: '40-2.jpg' -> '40'"""
-    name = os.path.splitext(os.path.basename(filename))[0]
-    if '-' in name:
-        name = name.split('-')[0]
-    if name.isdigit():
-        name = str(int(name))  # Убрать ведущие нули
-    return name
+    """Извлечь короткую подпись: последняя числовая группа или stem."""
+    return parse_file_info(filename)["caption"]
 
 def list_images(folder):
     exts = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tif', '.tiff'}
@@ -65,16 +84,11 @@ def has_b_suffix(filename):
     return name.lower().endswith('b')
 
 def remove_duplicates(files):
-    """Удалить дубли: если после нормализации имена совпадают, оставить файл с максимальным размером.
-    Исключить все файлы с буквой 'b' после цифры (01b, 01b-2 и т.п.)"""
+    """Удалить дубли: группируем по (collection, number) чтобы разные серии не смешивались."""
     groups = {}
-
-    # Сгруппировать файлы по нормализованному имени
     for filepath in files:
-        normalized = normalize_caption(filepath)
-        if normalized not in groups:
-            groups[normalized] = []
-        groups[normalized].append(filepath)
+        key = parse_file_info(filepath)["group_key"]
+        groups.setdefault(key, []).append(filepath)
 
     # Для каждой группы выбрать файл с максимальным размером
     result = []
@@ -139,17 +153,25 @@ def remove_duplicates(files):
     return sorted(result, key=natural_sort_key)
 
 def load_font(size):
-    try:
-        return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", size)
-    except:
+    """Подбирать читаемый шрифт: пробуем полужирные варианты, fallback — DejaVuSans."""
+    candidates = [
+        "/System/Library/Fonts/HelveticaNeue.ttc",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/System/Library/Fonts/SFNSText.ttf",
+        "Arial.ttf",
+        "DejaVuSans-Bold.ttf",
+        "DejaVuSans.ttf",
+    ]
+    for path in candidates:
         try:
-            return ImageFont.truetype("DejaVuSans.ttf", size)
-        except:
-            return ImageFont.load_default()
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 def draw_label(draw, x, y, w, h, text):
-    pad = max(2, int(round(min(w, h) * 0.02)))
-    size = max(12, int(round(min(w, h) * 0.10)))
+    pad = max(3, int(round(min(w, h) * 0.025)))
+    size = max(18, int(round(min(w, h) * 0.16)))
     font = load_font(size)
     def textbbox_size(s):
         try:
@@ -159,7 +181,7 @@ def draw_label(draw, x, y, w, h, text):
             return draw.textsize(s, font=font)
     maxw = w - 2*pad
     tw, th = textbbox_size(text)
-    while tw > maxw and size > 10:
+    while tw > maxw and size > 12:
         size -= 1
         font = load_font(size)
         tw, th = textbbox_size(text)
@@ -172,10 +194,21 @@ def draw_label(draw, x, y, w, h, text):
                 text = t; break
         else:
             text = ell; tw, th = textbbox_size(text)
+
+    # Полупрозрачная светло-серая подложка, чтобы не перекрывать фото
+    bg_h = th + pad*2
+    try:
+        from PIL import Image
+        overlay = Image.new('RGBA', (w, bg_h), (245, 245, 245, 140))
+        draw.im.paste(overlay, (x, y + h - bg_h), overlay)
+    except Exception:
+        # fallback: тонкая линия без заливки
+        draw.rectangle([x, y + h - bg_h, x + w, y + h], outline=(220,220,220))
+
     tx = x + (w - tw)//2
-    ty = y + h - th - pad
-    draw.text((tx, ty), text, font=font, fill=(255,255,255),
-              stroke_width=max(1, size//12), stroke_fill=(0,0,0))
+    ty = y + h - th - pad - 6  # ~2 мм при 72-96 dpi
+    draw.text((tx, ty), text, font=font, fill=(20,20,20),
+              stroke_width=max(1, size//14), stroke_fill=(245,245,245))
 
 def create_collage(files, cols, tile, gap, yarn_name=""):
     """Создать один коллаж из списка файлов"""
@@ -218,6 +251,29 @@ def create_collage(files, cols, tile, gap, yarn_name=""):
         canvas.paste(im, (x, y))
         caption = normalize_caption(path)
         draw_label(draw, x, y, tile, tile, caption)
+
+        # Низкий остаток — добавить бейдж
+        if caption in LOW_STOCK_CODES:
+            badge_h = max(30, tile // 8)
+            badge_w = min(tile, int(tile * 0.9))
+            bx = x + (tile - badge_w) // 2
+            by = y + tile - badge_h - bg_offset if (bg_offset := 0) else y + tile - badge_h
+            try:
+                badge = Image.new('RGBA', (badge_w, badge_h), (230, 230, 230, 180))
+                draw.im.paste(badge, (bx, by), badge)
+            except Exception:
+                draw.rectangle([bx, by, bx + badge_w, by + badge_h], fill=(230,230,230), outline=None)
+
+            bfont = load_font(max(14, badge_h // 2))
+            btext = LOW_STOCK_BADGE_TEXT
+            try:
+                bbox = draw.textbbox((0, 0), btext, font=bfont)
+                btw, bth = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            except Exception:
+                btw, bth = draw.textsize(btext, font=bfont)
+            btx = bx + (badge_w - btw)//2
+            bty = by + (badge_h - bth)//2
+            draw.text((btx, bty), btext, font=bfont, fill=(20,20,20))
 
     return canvas
 
